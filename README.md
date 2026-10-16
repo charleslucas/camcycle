@@ -10,6 +10,7 @@ A static web app (PWA) that shuffles through live public webcams on a timer. It'
 | `cameras.json` | The camera list (edit this to add or remove cameras) |
 | `manifest.webmanifest`, `sw.js`, `icons/` | PWA install support and offline app shell |
 | `tools/check-cameras.mjs` | Checks which cameras are currently live |
+| `tools/discover-cameras.mjs`, `tools/sources.json` | Finds new cameras from trusted sources |
 
 ## Run locally
 
@@ -89,6 +90,32 @@ The app re-downloads `cameras.json` every hour, so a TV left running picks up li
 ```sh
 node tools/check-cameras.mjs          # report
 node tools/check-cameras.mjs --prune  # also delete dead entries from cameras.json
+```
+
+## Finding new cameras
+
+`tools/discover-cameras.mjs` checks the trusted sources in `tools/sources.json` for live cameras that aren't in the list yet:
+- **YouTube channels:** it reads each channel's Live tab and keeps the streams marked LIVE that allow embedding.
+- **Caltrans:** it reads the official CCTV feed, keeps cameras whose names match the `match` pattern (beaches, bridges, Tahoe, passes and so on), and checks that each stream plays in a browser.
+
+```sh
+node tools/discover-cameras.mjs           # write new finds to tools/candidates.json for review
+node tools/discover-cameras.mjs --accept  # add the reviewed candidates to cameras.json
+node tools/discover-cameras.mjs --add     # find and add in one step (for scheduled runs)
+```
+
+**Reviewing:** in `tools/candidates.json`, fix any names, locations or categories you want to change. Add `"skip": true` to cameras you don't want. `--accept` adds the rest and records the skipped ones in `tools/rejected.json`, so they're never suggested again. The `title` field shows the original YouTube title for reference and is dropped on accept.
+
+**Tuning (`tools/sources.json`):**
+- **Add a source:** add a channel to `youtube` with its `channelId`, a default `category`, and a `location`/`country`. Leave `location` empty for channels that cover many places; locations in parentheses at the end of titles are picked up automatically.
+- **Filter a channel:** `include` and `exclude` are per-channel title patterns (for example, NASA only keeps ISS streams).
+- **Shared rules:** `defaults.maxPerChannel` (6) keeps big networks from flooding the shuffle. `defaults.exclude` drops non-camera streams such as music. `defaults.strip` removes boilerplate from names.
+- **Caltrans volume:** `caltrans.maxPerRun` caps how many traffic cameras are added per run.
+
+**Scheduling:** to update automatically every week on Windows (prune dead cameras, add new ones, publish):
+
+```powershell
+schtasks /Create /SC WEEKLY /D SUN /ST 09:00 /TN "CamCycle update" /TR "powershell -NoProfile -Command \"cd 'C:\path\to\camcycle'; node tools/check-cameras.mjs --prune; node tools/discover-cameras.mjs --add; git commit -am 'Weekly camera update'; git push\""
 ```
 
 ## Roadmap

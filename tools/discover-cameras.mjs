@@ -1,0 +1,195 @@
+// Looks for new live cameras from the trusted sources in tools/sources.json.
+//   node tools/discover-cameras.mjs           find new cameras and write them to tools/candidates.json for review
+//   node tools/discover-cameras.mjs --accept  move reviewed candidates into cameras.json
+//   node tools/discover-cameras.mjs --add     find new cameras and add them to cameras.json directly (for scheduled runs)
+//
+// Reviewing: in tools/candidates.json, fix any names/categories, and set "skip": true on cameras you don't want.
+// --accept adds the rest to cameras.json and remembers skipped ones in tools/rejected.json so they're never suggested again.
+// Requires Node 18+ (built-in fetch).
+
+import { rm } from 'node:fs/promises';
+import { CAMERAS_FILE, get, readJson, writeJson, mapLimit, checkEmbeddable, checkHls, channelLiveVideos } from './lib.mjs';
+
+const SOURCES_FILE = new URL('./sources.json', import.meta.url);
+const CANDIDATES_FILE = new URL('./candidates.json', import.meta.url);
+const REJECTED_FILE = new URL('./rejected.json', import.meta.url);
+const CALTRANS_SOURCE = 'https://cwwp2.dot.ca.gov/documentation/cctv/cctv.htm';
+
+// A camera's identity is its video ID or stream URL, so renamed entries still count as known.
+const keyOf = (cam) => (cam.type === 'hls' ? cam.url : cam.videoId);
+
+const slug = (s) => s.normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase()
+  .replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 48);
+
+function uniqueId(base, taken) {
+  let id = base || 'camera';
+  for (let n = 2; taken.has(id); n++) id = `${base}-${n}`;
+  taken.add(id);
+  return id;
+}
+
+// "🔴 LIVE 24/7: Shark Cam | Monterey Bay Aquarium" -> "Shark Cam"
+// `strip` is an optional regex (from sources.json) for channel boilerplate like "powered by EXPLORE.org".
+function cleanTitle(title, strip) {
+  let s = title.split(/\s+[|•–—]\s+/)[0]
+    .replace(/\p{Extended_Pictographic}|️|[♫♪*]/gu, '')
+    .replace(/\b(24\/7|24h|4K|UHD|HD|LIVE ?NOW|LIVE ?STREAM|LIVE|EN VIVO|IN DIRETTA|DIRECT)\b/gi, '');
+  // Strip repeatedly: removing one suffix can expose another ("… Webcam - Full").
+  for (let prev; strip && prev !== s;) { prev = s; s = s.replace(strip, ' ').trim(); }
+  s = s.replace(/^[\s:,\-–]+|[\s:,\-–.]+$/g, '').replace(/\s{2,}/g, ' ').trim();
+  return s || title.trim();
+}
+
+// "Aquarium Cam (Baltimore, Maryland)" -> ["Aquarium Cam", "Baltimore, Maryland"]
+function splitLocation(name) {
+  const m = name.match(/^(.+?)\s*\(([^()]+)\)$/);
+  return m ? [m[1], m[2]] : [name, ''];
+}
+
+function shuffle(arr) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+// perChannel: how many cameras each channel already has (in the list or awaiting review).
+async function discoverYouTube(channels, defaults, perChannel, known, ids) {
+  const regex = (s) => s && new RegExp(s, 'i');
+  const globalExclude = regex(defaults.exclude);
+  const strip = regex(defaults.strip);
+  const found = [];
+  await mapLimit(channels, 4, async (ch) => {
+    // Cap each channel so big networks (EarthCam, Venice) don't crowd out everything else in the shuffle.
+    const room = (ch.max ?? defaults.maxPerChannel ?? Infinity) - (perChannel.get(ch.channelId) ?? 0);
+    if (room <= 0) return;
+    let live;
+    try {
+      live = await channelLiveVideos(ch.channelId);
+    } catch (err) {
+      console.warn(`  ! ${ch.channel}: ${err.message}`);
+      return;
+    }
+    const include = regex(ch.include);
+    const exclude = regex(ch.exclude);
+    let added = 0;
+    for (const { videoId, title } of live) {
+      if (added >= room) break;
+      if (known.has(videoId) || (include && !include.test(title))) continue;
+      if ((exclude && exclude.test(title)) || (globalExclude && globalExclude.test(title))) continue;
+      known.add(videoId);
+      const why = await checkEmbeddable(videoId).catch((err) => err.message);
+      if (why) { console.log(`  - ${ch.channel}: "${title}" skipped (${why})`); continue; }
+      let [name, location] = splitLocation(cleanTitle(title, strip));
+      location ||= ch.location;
+      found.push({
+        id: uniqueId(slug(name), ids), name, type: 'youtube', videoId, channelId: ch.channelId,
+        channel: ch.channel, category: ch.category, location, country: ch.country,
+        credit: ch.channel, source: `https://www.youtube.com/watch?v=${videoId}`, title,
+      });
+      added++;
+    }
+  });
+  return found;
+}
+
+async function discoverCaltrans(cfg, known, ids) {
+  const match = cfg.match && new RegExp(cfg.match, 'i');
+  const pool = [];
+  for (const d of cfg.districts) {
+    const url = `https://cwwp2.dot.ca.gov/data/d${d}/cctv/cctvStatusD${String(d).padStart(2, '0')}.json`;
+    try {
+      const { res, text } = await get(url);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      for (const { cctv } of JSON.parse(text).data) {
+        const stream = cctv.imageData?.streamingVideoURL;
+        const loc = cctv.location;
+        if (cctv.inService !== 'true' || !stream || known.has(stream)) continue;
+        if (match && !match.test(`${loc.locationName} ${loc.nearbyPlace}`)) continue;
+        pool.push({ stream, loc });
+      }
+    } catch (err) {
+      console.warn(`  ! Caltrans district ${d}: ${err.message}`);
+    }
+  }
+  console.log(`  ${pool.length} matching Caltrans cameras not in the list yet; checking a random few`);
+
+  // Caltrans has hundreds of matching cameras and many are offline at any moment,
+  // so check a shuffled pool in small batches until we have enough working ones.
+  const found = [];
+  shuffle(pool);
+  while (pool.length && found.length < cfg.maxPerRun) {
+    const batch = pool.splice(0, 8);
+    const results = await mapLimit(batch, 8, ({ stream }) => checkHls(stream).catch((err) => err.message));
+    batch.forEach(({ stream, loc }, i) => {
+      if (results[i] || found.length >= cfg.maxPerRun) return;
+      known.add(stream);
+      // Drop camera codes: "TV102 -- I-580 : West of SR-24" -> "I-580 West of SR-24",
+      // "I-5 (95) El Toro Road" -> "I-5 El Toro Road", "(C513) I-5 SB…" -> "I-5 SB…", "29 - NB SR-99…" -> "NB SR-99…"
+      const name = loc.locationName.replace(/^.*?--\s*/, '').replace(/\s*:\s*/g, ' ')
+        .replace(/\([A-Z]?\d+\)\s*/g, '').replace(/^\d+\s*-\s*/, '').replace(/_/g, ' ')
+        .replace(/\s{2,}/g, ' ').trim();
+      found.push({
+        id: uniqueId('caltrans-' + slug(name), ids), name, type: 'hls', url: stream,
+        category: cfg.category, location: `${loc.nearbyPlace}, California`, country: 'US',
+        credit: 'Caltrans', source: CALTRANS_SOURCE,
+      });
+    });
+  }
+  return found;
+}
+
+async function accept() {
+  const candidates = await readJson(CANDIDATES_FILE, null);
+  if (!candidates) return console.log('No tools/candidates.json to accept. Run without --accept first.');
+  const cams = await readJson(CAMERAS_FILE);
+  const rejected = await readJson(REJECTED_FILE, []);
+  const known = new Set(cams.map(keyOf));
+  let added = 0;
+  for (const { skip, title, ...cam } of candidates) {
+    if (skip) { rejected.push(keyOf(cam)); continue; }
+    if (known.has(keyOf(cam))) continue;
+    cams.push(cam);
+    known.add(keyOf(cam));
+    added++;
+  }
+  await writeJson(CAMERAS_FILE, cams);
+  await writeJson(REJECTED_FILE, [...new Set(rejected)]);
+  await rm(CANDIDATES_FILE);
+  console.log(`Added ${added} camera(s) to cameras.json; ${candidates.length - added} skipped or already present.`);
+}
+
+async function discover(addDirectly) {
+  const sources = await readJson(SOURCES_FILE);
+  const cams = await readJson(CAMERAS_FILE);
+  const rejected = await readJson(REJECTED_FILE, []);
+  const pending = await readJson(CANDIDATES_FILE, []);
+  // Don't re-suggest anything already listed, rejected, or waiting for review.
+  const known = new Set([...cams.map(keyOf), ...rejected, ...pending.map(keyOf)]);
+  const ids = new Set([...cams, ...pending].map((c) => c.id));
+  const perChannel = new Map();
+  for (const c of [...cams, ...pending]) if (c.channelId) perChannel.set(c.channelId, (perChannel.get(c.channelId) ?? 0) + 1);
+
+  console.log(`Checking ${sources.youtube?.length ?? 0} YouTube channels…`);
+  const found = await discoverYouTube(sources.youtube ?? [], sources.defaults ?? {}, perChannel, known, ids);
+  if (sources.caltrans) {
+    console.log('Checking Caltrans…');
+    found.push(...await discoverCaltrans(sources.caltrans, known, ids));
+  }
+
+  console.log(`\nFound ${found.length} new camera(s):`);
+  for (const c of found) console.log(`  + [${c.category}] ${c.name}${c.location ? ' — ' + c.location : ''}  (${c.credit})`);
+  if (!found.length) return;
+
+  if (addDirectly) {
+    await writeJson(CAMERAS_FILE, [...cams, ...found.map(({ title, ...c }) => c)]);
+    console.log('\nAdded them to cameras.json.');
+  } else {
+    await writeJson(CANDIDATES_FILE, [...pending, ...found]);
+    console.log('\nWrote tools/candidates.json. Review it (set "skip": true on any you don\'t want), then run with --accept.');
+  }
+}
+
+if (process.argv.includes('--accept')) await accept();
+else await discover(process.argv.includes('--add'));

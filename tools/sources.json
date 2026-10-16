@@ -1,0 +1,41 @@
+{
+  "defaults": {
+    "maxPerChannel": 6,
+    "exclude": "music|rolling cam|trending|backup|aviso|compilation|highlights|replay|cams around|around the world|playlist",
+    "strip": "\\s*(powered by explore\\.org|[-–]\\s*seejh\\.(ai|com)|^earthcam\\s*:\\s*|camera$|webcam$|live ?cam$|[-–]\\s*full$)\\s*"
+  },
+  "youtube": [
+    { "channelId": "UCLA_DiR1FfKNvjuUpBHmylQ", "channel": "NASA", "category": "space", "location": "Low Earth Orbit", "country": "US", "include": "ISS|Space Station|Earth" },
+    { "channelId": "UCUtGnX65osNPQ98Y3-SSgpg", "channel": "Explore Northern Lights & Nature Meditation Cams", "category": "nature", "location": "", "country": "" },
+    { "channelId": "UC-2KSeUU5SMCX6XLRD-AEvw", "channel": "Explore Live Nature Cams", "category": "animals", "location": "", "country": "" },
+    { "channelId": "UCnM5iMGiKsZg-iOlIO2ZkdQ", "channel": "Monterey Bay Aquarium", "category": "animals", "location": "Monterey, California", "country": "US" },
+    { "channelId": "UCZvXaNYIcapCEcaJe_2cP7A", "channel": "California Academy of Sciences", "category": "animals", "location": "San Francisco, California", "country": "US" },
+    { "channelId": "UCbzl-qtfTKY9QNgtnqmuyBw", "channel": "Vancouver Aquarium", "category": "animals", "location": "Vancouver, British Columbia", "country": "CA" },
+    { "channelId": "UCB4RSGRBhM670UlcG-oCxeA", "channel": "Taronga Zoo Sydney", "category": "animals", "location": "Sydney, NSW", "country": "AU" },
+    { "channelId": "UCS9UBqaUtoIXUhX0J1BnxwQ", "channel": "Zoos Victoria", "category": "animals", "location": "Victoria", "country": "AU" },
+    { "channelId": "UCpYmJpK_TSk8imQsZ8A9LNA", "channel": "Bushtops Safaris", "category": "nature", "location": "Maasai Mara", "country": "KE" },
+    { "channelId": "UCEpDjqeFIGTqHwk-uULx72Q", "channel": "See Jackson Hole", "category": "mountains", "location": "Jackson Hole, Wyoming", "country": "US" },
+    { "channelId": "UCMpn1qLudF-zb4M4bqxLIbw", "channel": "I Love You Venice", "category": "cities", "location": "Venice, Veneto", "country": "IT" },
+    { "channelId": "UCfCxyg8waxuAPxa8WmBY49g", "channel": "渋谷センター商店街", "category": "cities", "location": "Shibuya, Tokyo", "country": "JP" },
+    { "channelId": "UColBcWm6ybTbQnNuQS8JaKg", "channel": "webcamsdemexico", "category": "cities", "location": "", "country": "MX" },
+    { "channelId": "UC_FuR9GFVJE2A8H02sQmHWw", "channel": "Umbria Webcam", "category": "cities", "location": "Umbria", "country": "IT" },
+    { "channelId": "UCpkcJlssp52fP6xHFUYT9ag", "channel": "mbl.is", "category": "cities", "location": "Iceland", "country": "IS" },
+    { "channelId": "UC6qrG3W8SMK0jior2olka3g", "channel": "EarthCam", "category": "cities", "location": "", "country": "" },
+    { "channelId": "UCDJh28AZ5bVqncHvBAiHk3A", "channel": "Live webcams Zandvoort", "category": "beaches", "location": "Zandvoort, North Holland", "country": "NL" },
+    { "channelId": "UCZqr-kHlRzGyCgh7BHksSAw", "channel": "Cannes webcams : Boulevard du midi", "category": "beaches", "location": "Cannes, Provence-Alpes-Cote d'Azur", "country": "FR" },
+    { "channelId": "UClqd_NklmF4AnW4MYiCeSEg", "channel": "Hotel Union Geiranger", "category": "mountains", "location": "Geiranger, More og Romsdal", "country": "NO" },
+    { "channelId": "UC4BM1oZhL6hnMp13bws6-sg", "channel": "Grimentz Live", "category": "mountains", "location": "Grimentz, Valais", "country": "CH" },
+    { "channelId": "UCRiY_FP2PZHeWWuIsMKyxGA", "channel": "Les Arcs", "category": "mountains", "location": "Bourg-Saint-Maurice, Savoie", "country": "FR" },
+    { "channelId": "UCeGyo_v1ppwH-e77CVqLSJg", "channel": "Dublin Port", "category": "harbors", "location": "Dublin", "country": "IE" },
+    { "channelId": "UCuaFFNhZkcEg2JjEPvzjzzw", "channel": "Port of Helsinki", "category": "harbors", "location": "Helsinki", "country": "FI" },
+    { "channelId": "UCTGhjtFloAPlbLy4_yrkoWg", "channel": "Port of Newcastle", "category": "harbors", "location": "Newcastle, NSW", "country": "AU" },
+    { "channelId": "UCF8fPE7D-xcesU8zt1U2EuQ", "channel": "LA1H - Harstad", "category": "harbors", "location": "Harstad, Troms", "country": "NO" },
+    { "channelId": "UC-bEmTUibiby67vliNPscBA", "channel": "Feel The Nature", "category": "nature", "location": "Finland", "country": "FI" }
+  ],
+  "caltrans": {
+    "districts": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+    "match": "beach|bay|bridge|summit|pass|lake|tahoe|pier|harbor|port|coast|ocean|pch|big sur|yosemite|donner|golden gate",
+    "maxPerRun": 5,
+    "category": "traffic"
+  }
+}
