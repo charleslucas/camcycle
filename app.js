@@ -303,11 +303,16 @@ async function playHls(cam, token) {
   const start = async () => {
     try {
       await v.play();
-    } catch {
-      // Browsers refuse unmuted autoplay without a recent tap; fall back to muted.
+    } catch (err) {
       if (token !== state.token) return;
+      // AbortError just means a reload/reconnect interrupted this play() call; the load timeout still guards us.
+      if (err.name === 'AbortError') return;
+      if (err.name !== 'NotAllowedError') return fail(cam, `play failed (${err.name})`);
+      // Browsers refuse unmuted autoplay without a recent tap; fall back to muted.
       setMuted(true);
-      await v.play().catch(() => { if (token === state.token) fail(cam, 'autoplay blocked'); });
+      await v.play().catch((e) => {
+        if (token === state.token && e.name !== 'AbortError') fail(cam, `autoplay blocked (${e.name})`);
+      });
     }
   };
 
