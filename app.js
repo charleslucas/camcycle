@@ -6,6 +6,7 @@ const STALL_TIMEOUT_MS = 30000;  // skip a camera that buffers this long mid-pla
 const DEAD_TTL_MS = 2 * 60 * 60 * 1000; // remember failed cameras for 2 hours
 const IDLE_MS = 4000;            // hide controls after this much inactivity
 const CAPTION_MS = 8000;         // keep the caption up this long after each switch
+const REFRESH_MS = 60 * 60 * 1000; // re-fetch cameras.json this often
 
 const $ = (id) => document.getElementById(id);
 const els = {
@@ -16,7 +17,7 @@ const els = {
   prev: $('prev-btn'), pause: $('pause-btn'), next: $('next-btn'),
   mute: $('mute-btn'), fav: $('fav-btn'), cat: $('cat-select'),
   time: $('time-select'), listBtn: $('list-btn'), fs: $('fs-btn'),
-  panel: $('list-panel'), listClose: $('list-close'), list: $('cam-list'),
+  panel: $('list-panel'), listClose: $('list-close'), list: $('cam-list'), retry: $('retry-btn'),
 };
 
 // ---------- persistence (all optional: storage can be unavailable) ----------
@@ -410,13 +411,17 @@ function renderList() {
     b.textContent = (state.favorites.has(cam.id) ? '★ ' : '') + cam.name;
     small.textContent = [cam.location, cam.category].filter(Boolean).join(' · ');
     b.append(small);
-    b.classList.toggle('current', cam === state.current);
+    // Compare ids: after a list refresh the current camera is an object from the old list.
+    b.classList.toggle('current', cam.id === state.current?.id);
     b.classList.toggle('dead', state.dead.has(cam.id));
     b.onclick = () => { jumpTo(cam); toggleList(false); };
     li.append(b);
     return li;
   });
   els.list.replaceChildren(...items);
+  const skipped = state.cams.filter((c) => state.dead.has(c.id)).length;
+  els.retry.hidden = !skipped;
+  els.retry.textContent = `↻ Retry skipped cameras (${skipped})`;
 }
 
 function toggleList(show = els.panel.hidden) {
@@ -505,6 +510,7 @@ els.mute.onclick = () => setMuted(!state.muted);
 els.fav.onclick = toggleFavorite;
 els.listBtn.onclick = () => toggleList();
 els.listClose.onclick = () => toggleList(false);
+els.retry.onclick = retrySkipped;
 els.fs.onclick = toggleFullscreen;
 els.fs.hidden = !canFullscreen;
 els.cat.onchange = () => setCategory(els.cat.value);
@@ -515,17 +521,46 @@ els.time.onchange = () => {
 
 // ---------- startup ----------
 
+async function loadCameras() {
+  const res = await fetch('cameras.json', { cache: 'no-cache' });
+  if (!res.ok) throw new Error('cameras.json HTTP ' + res.status);
+  const cams = (await res.json()).filter((c) => c.id && c.name && (c.type === 'hls' ? c.url : c.videoId || c.channelId));
+  if (!cams.length) throw new Error('cameras.json has no usable cameras');
+  state.cams = cams;
+  state.byId = new Map(cams.map((c) => [c.id, c]));
+}
+
+// Pick up list changes on long-running TVs without interrupting the current camera.
+// Removed cameras fall out of the deck and history on their own because lookups go through byId.
+async function refreshCameras() {
+  try {
+    await loadCameras();
+    renderCategories();
+    renderList();
+    if (!state.current) next(); // we were showing "no cameras"; the new list may have some
+  } catch (err) {
+    console.warn('Camera list refresh failed; keeping the old list.', err);
+  }
+}
+
+function retrySkipped() {
+  state.dead.clear();
+  save('dead', {});
+  renderList();
+  els.listClose.focus(); // the retry button just hid itself; keep TV remote focus inside the panel
+  if (!state.current) next();
+}
+
 async function init() {
   try {
-    const res = await fetch('cameras.json', { cache: 'no-cache' });
-    state.cams = (await res.json()).filter((c) => c.id && c.name && (c.type === 'hls' ? c.url : c.videoId || c.channelId));
+    await loadCameras();
   } catch (err) {
     els.startBtn.disabled = true;
     els.startBtn.textContent = 'Could not load camera list';
     console.error(err);
     return;
   }
-  for (const c of state.cams) state.byId.set(c.id, c);
+  setInterval(refreshCameras, REFRESH_MS);
 
   if (state.category !== 'all' && state.category !== 'favorites' && !state.cams.some((c) => c.category === state.category)) {
     state.category = 'all';

@@ -1,6 +1,6 @@
 // Caches the app shell so it opens instantly. Streams themselves are never cached.
 // Bump VERSION whenever you change the shell files.
-const VERSION = 'camcycle-v1';
+const VERSION = 'camcycle-v2';
 const SHELL = ['./', 'index.html', 'styles.css', 'app.js', 'manifest.webmanifest', 'icons/icon.svg'];
 
 self.addEventListener('install', (e) => {

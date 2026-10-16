@@ -80,7 +80,9 @@ Settings changed in the app (category, timer, sound, favorites) are remembered p
 - **HLS:** the URL must be `https`, and the server must send CORS headers (`Access-Control-Allow-Origin`). Otherwise browsers won't play it outside Safari.
 - Only add cameras that their owners publish on purpose (parks, DOTs, tourism boards, zoos and so on). Don't use "insecure camera" directories.
 
-Cameras that fail to load are skipped automatically and retried after 2 hours.
+Cameras that fail to load are skipped automatically and retried after 2 hours. To retry them sooner, open the camera list (☰) and choose **Retry skipped cameras**.
+
+The app re-downloads `cameras.json` every hour, so a TV left running picks up list changes without a reload, and the camera on screen keeps playing.
 
 ## Checking camera health
 

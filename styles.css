@@ -206,3 +206,8 @@ button:focus-visible, select:focus-visible, #cam-list button:focus-visible {
 #cam-list .current { background: rgba(79, 179, 255, 0.25); }
 #cam-list .dead { opacity: 0.4; text-decoration: line-through; }
 #cam-list small { display: block; color: var(--muted); }
+#list-panel #retry-btn {
+  margin: 0 16px 16px;
+  font-size: 1rem;
+}
+#retry-btn[hidden] { display: none; }
