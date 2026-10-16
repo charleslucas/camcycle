@@ -31,19 +31,26 @@ function uniqueId(base, taken) {
 // "🔴 LIVE 24/7: Shark Cam | Monterey Bay Aquarium" -> "Shark Cam"
 // `strip` is an optional regex (from sources.json) for channel boilerplate like "powered by EXPLORE.org".
 function cleanTitle(title, strip) {
-  let s = title.split(/\s+[|•–—]\s+/)[0]
+  // Separators between alternate titles ("渋谷… / Shibuya…"): keep the first. A bare "/" (as in "24/7") doesn't count.
+  let s = title.split(/\s+[|•–—]\s+|\s*[｜／]\s*|\s+\/\s*|\s*\/\s+/)[0]
     .replace(/\p{Extended_Pictographic}|️|[♫♪*]/gu, '')
-    .replace(/\b(24\/7|24h|4K|UHD|HD|LIVE ?NOW|LIVE ?STREAM|LIVE|EN VIVO|IN DIRETTA|DIRECT)\b/gi, '');
+    .replace(/\b(24\/7|24h|4K|UHD|HD|LIVE ?NOW|LIVE ?STREAM|LIVE|EN VIVO|IN DIRETTA|DIRECTO|DIRECT)\b/gi, '')
+    .replace(/(^|\s)#[\p{L}\p{N}_]+/gu, ' ')                // hashtags
+    .replace(/^\d{1,2}\/\d{1,2}\/\d{2,4}\s*-\s*/, '')       // leading dates like "07/10/26 - "
+    .replace(/【\s*】|\[\s*\]|\(\s*\)|（\s*）/g, ' ');       // brackets left empty by the removals above
   // Strip repeatedly: removing one suffix can expose another ("… Webcam - Full").
   for (let prev; strip && prev !== s;) { prev = s; s = s.replace(strip, ' ').trim(); }
-  s = s.replace(/^[\s:,\-–]+|[\s:,\-–.]+$/g, '').replace(/\s{2,}/g, ' ').trim();
+  s = s.replace(/^[\s:,\-–#]+|[\s:,\-–.#]+$/g, '').replace(/\s{2,}/g, ' ').trim();
+  // Captions wrap badly past ~70 characters; cut at a word boundary.
+  if (s.length > 70) s = s.slice(0, 70).replace(/\s+\S*$/, '') + '…';
   return s || title.trim();
 }
 
-// "Aquarium Cam (Baltimore, Maryland)" -> ["Aquarium Cam", "Baltimore, Maryland"]
+// "Aquarium Cam (Baltimore, Maryland)" -> ["Aquarium Cam", "Baltimore, Maryland"].
+// Only "Place, Region"-shaped parentheses count, so "Penguin Cam (Biologist View)" stays intact.
 function splitLocation(name) {
-  const m = name.match(/^(.+?)\s*\(([^()]+)\)$/);
-  return m ? [m[1], m[2]] : [name, ''];
+  const m = name.match(/^(.+?)\s*\(([^()]+,[^()]+)\)$/);
+  return m ? [m[1], m[2].trim()] : [name, ''];
 }
 
 function shuffle(arr) {
@@ -81,8 +88,10 @@ async function discoverYouTube(channels, defaults, perChannel, known, ids) {
       known.add(videoId);
       const why = await checkEmbeddable(videoId).catch((err) => err.message);
       if (why) { console.log(`  - ${ch.channel}: "${title}" skipped (${why})`); continue; }
-      let [name, location] = splitLocation(cleanTitle(title, strip));
-      location ||= ch.location;
+      // Titles only supply the location for channels that cover many places.
+      let name = cleanTitle(title, strip);
+      let location = ch.location;
+      if (!location) [name, location] = splitLocation(name);
       found.push({
         id: uniqueId(slug(name), ids), name, type: 'youtube', videoId, channelId: ch.channelId,
         channel: ch.channel, category: ch.category, location, country: ch.country,
@@ -94,7 +103,17 @@ async function discoverYouTube(channels, defaults, perChannel, known, ids) {
   return found;
 }
 
-async function discoverCaltrans(cfg, known, ids) {
+// listed: every camera in the list, awaiting review, or found earlier this run (used for the traffic share cap).
+async function discoverCaltrans(cfg, known, ids, listed) {
+  // Keep traffic cams to at most maxShare of the list: t / (t + others) <= share  =>  t <= share * others / (1 - share).
+  const traffic = listed.filter((c) => c.category === cfg.category).length;
+  const allowed = cfg.maxShare == null ? Infinity
+    : Math.floor((cfg.maxShare * (listed.length - traffic)) / (1 - cfg.maxShare)) - traffic;
+  const limit = Math.min(cfg.maxPerRun ?? Infinity, allowed);
+  if (limit <= 0) {
+    console.log(`  skipped: ${traffic} of ${listed.length} cameras are already ${cfg.category} (cap ${cfg.maxShare * 100}%)`);
+    return [];
+  }
   const match = cfg.match && new RegExp(cfg.match, 'i');
   const pool = [];
   for (const d of cfg.districts) {
@@ -119,11 +138,11 @@ async function discoverCaltrans(cfg, known, ids) {
   // so check a shuffled pool in small batches until we have enough working ones.
   const found = [];
   shuffle(pool);
-  while (pool.length && found.length < cfg.maxPerRun) {
+  while (pool.length && found.length < limit) {
     const batch = pool.splice(0, 8);
     const results = await mapLimit(batch, 8, ({ stream }) => checkHls(stream).catch((err) => err.message));
     batch.forEach(({ stream, loc }, i) => {
-      if (results[i] || found.length >= cfg.maxPerRun) return;
+      if (results[i] || found.length >= limit) return;
       known.add(stream);
       // Drop camera codes: "TV102 -- I-580 : West of SR-24" -> "I-580 West of SR-24",
       // "I-5 (95) El Toro Road" -> "I-5 El Toro Road", "(C513) I-5 SB…" -> "I-5 SB…", "29 - NB SR-99…" -> "NB SR-99…"
@@ -175,7 +194,7 @@ async function discover(addDirectly) {
   const found = await discoverYouTube(sources.youtube ?? [], sources.defaults ?? {}, perChannel, known, ids);
   if (sources.caltrans) {
     console.log('Checking Caltrans…');
-    found.push(...await discoverCaltrans(sources.caltrans, known, ids));
+    found.push(...await discoverCaltrans(sources.caltrans, known, ids, [...cams, ...pending, ...found]));
   }
 
   console.log(`\nFound ${found.length} new camera(s):`);
