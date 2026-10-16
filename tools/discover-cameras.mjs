@@ -33,7 +33,7 @@ function uniqueId(base, taken) {
 function cleanTitle(title, strip) {
   // Separators between alternate titles ("渋谷… / Shibuya…"): keep the first. A bare "/" (as in "24/7") doesn't count.
   let s = title.split(/\s+[|•–—]\s+|\s*[｜／]\s*|\s+\/\s*|\s*\/\s+/)[0]
-    .replace(/\p{Extended_Pictographic}|️|[♫♪*]/gu, '')
+    .replace(/\p{Extended_Pictographic}|\p{Regional_Indicator}|️|[♫♪*]/gu, '')
     .replace(/\b(24\/7|24h|4K|UHD|HD|LIVE ?NOW|LIVE ?STREAM|LIVE|EN VIVO|IN DIRETTA|DIRECTO|DIRECT)\b/gi, '')
     .replace(/(^|\s)#[\p{L}\p{N}_]+/gu, ' ')                // hashtags
     .replace(/^\d{1,2}\/\d{1,2}\/\d{2,4}\s*-\s*/, '')       // leading dates like "07/10/26 - "
