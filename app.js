@@ -7,6 +7,7 @@ const DEAD_TTL_MS = 2 * 60 * 60 * 1000; // remember failed cameras for 2 hours
 const IDLE_MS = 4000;            // hide controls after this much inactivity
 const CAPTION_MS = 8000;         // keep the caption up this long after each switch
 const REFRESH_MS = 60 * 60 * 1000; // re-fetch cameras.json this often
+const FAIL_STREAK_LIMIT = 4;     // this many failures in a row looks like our network, not the cameras
 
 const $ = (id) => document.getElementById(id);
 const els = {
@@ -18,6 +19,7 @@ const els = {
   mute: $('mute-btn'), fav: $('fav-btn'), cat: $('cat-select'),
   time: $('time-select'), listBtn: $('list-btn'), fs: $('fs-btn'),
   panel: $('list-panel'), listClose: $('list-close'), list: $('cam-list'), retry: $('retry-btn'),
+  toast: $('toast'),
 };
 
 // ---------- persistence (all optional: storage can be unavailable) ----------
@@ -54,6 +56,9 @@ const state = {
   loadTimer: 0,
   stallTimer: 0,
   lastSwitch: 0,
+  failStreak: 0,          // consecutive camera failures
+  streakIds: [],          // cameras marked failed during the current streak
+  retryOnVisible: false,  // a camera "failed" while the page was hidden; replay it when visible
 };
 
 // ---------- camera list and shuffling ----------
@@ -125,20 +130,37 @@ function markDead(cam) {
 }
 
 function showEmpty() {
+  // Nothing playable in the chosen category: fall back to All rather than sitting on a blank screen.
+  // The saved category is left alone, so it applies again on the next visit.
+  if (state.category !== 'all') {
+    toast(state.category === 'favorites'
+      ? 'No favorites yet (tap ☆ to add one). Showing all cameras.'
+      : `No working ${els.cat.selectedOptions[0]?.text.replace(/\s*\(\d+\)$/, '') ?? state.category} cameras right now. Showing all cameras.`);
+    state.category = 'all';
+    els.cat.value = 'all';
+    state.deck = [];
+    renderList();
+    return next();
+  }
+  // Every camera is unavailable, which almost always means our connection.
   teardown();
   state.current = null;
   els.loading.hidden = false;
-  els.loadingText.textContent = state.category === 'favorites'
-    ? 'No favorites yet. Tap ☆ on a camera you like.'
-    : 'No working cameras in this category right now. Retrying in a minute…';
-  if (state.category !== 'favorites') {
-    const token = ++state.token;
-    setTimeout(() => {
-      if (token !== state.token) return;
-      for (const c of state.cams) if (inCategory(c)) state.dead.delete(c.id);
-      next();
-    }, 60000);
-  }
+  els.loadingText.textContent = 'Can\'t reach any cameras right now. Check your connection; retrying in a minute…';
+  const token = ++state.token;
+  setTimeout(() => {
+    if (token !== state.token) return;
+    state.dead.clear();
+    next();
+  }, 60000);
+}
+
+let toastTimer = 0;
+function toast(message) {
+  els.toast.textContent = message;
+  els.toast.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { els.toast.hidden = true; }, 6000);
 }
 
 // ---------- playback ----------
@@ -192,8 +214,36 @@ function play(cam) {
 }
 
 function fail(cam, reason) {
+  // Browsers hold back video in background tabs, so a "failure" there says nothing about the camera.
+  // Try this camera again when the page is visible.
+  if (document.hidden) {
+    clearTimeout(state.loadTimer);
+    clearStall();
+    state.retryOnVisible = true;
+    return;
+  }
+  // Several failures in a row usually means our connection is down, not that the cameras are.
+  // Don't mark them; wait and try again.
+  if (++state.failStreak >= FAIL_STREAK_LIMIT) {
+    console.warn(`Skipping ${cam.id}: ${reason} (${state.failStreak} failures in a row; looks like a connection problem, pausing)`);
+    // The cameras that failed just before this one were probably fine too.
+    for (const id of state.streakIds) state.dead.delete(id);
+    state.streakIds = [];
+    save('dead', Object.fromEntries(state.dead));
+    teardown();
+    const token = ++state.token;
+    els.loading.hidden = false;
+    els.loadingText.textContent = 'Having trouble reaching the cameras. Check your connection; retrying in 30 seconds…';
+    setTimeout(() => {
+      if (token !== state.token) return;
+      state.failStreak = FAIL_STREAK_LIMIT - 1; // one more failure pauses again; a success resets it
+      next();
+    }, 30000);
+    return;
+  }
   console.warn(`Skipping ${cam.id}: ${reason}`);
   markDead(cam);
+  state.streakIds.push(cam.id);
   // Drop it from history so ⏮ doesn't land on it again.
   const i = state.history.lastIndexOf(cam.id);
   if (i !== -1) { state.history.splice(i, 1); if (state.pos >= i) state.pos--; }
@@ -205,7 +255,9 @@ function onPlaying(token) {
   clearTimeout(state.loadTimer);
   clearStall();
   els.loading.hidden = true;
-  if (!state.playingSince && !state.paused) state.playingSince = Date.now();
+  state.failStreak = 0;
+  state.streakIds = [];
+  thawDwell();
 }
 
 function onStall(token) {
@@ -356,14 +408,31 @@ setInterval(() => {
   if (left <= 0) next();
 }, 250);
 
-function togglePause() {
-  state.paused = !state.paused;
-  if (state.paused && state.playingSince) {
-    state.elapsed += Date.now() - state.playingSince;
-    state.playingSince = 0;
-  } else if (!state.paused && els.loading.hidden && state.current) {
+// The dwell clock runs only while a camera is playing, the shuffle isn't paused, and the page is visible.
+function freezeDwell() {
+  if (!state.playingSince) return;
+  state.elapsed += Date.now() - state.playingSince;
+  state.playingSince = 0;
+}
+function thawDwell() {
+  if (!state.playingSince && !state.paused && !document.hidden && els.loading.hidden && state.current) {
     state.playingSince = Date.now();
   }
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) return freezeDwell();
+  if (state.retryOnVisible && state.current) {
+    state.retryOnVisible = false;
+    play(state.current);
+  } else {
+    thawDwell();
+  }
+});
+
+function togglePause() {
+  state.paused = !state.paused;
+  state.paused ? freezeDwell() : thawDwell();
   els.pause.textContent = state.paused ? '▶' : '⏸';
   els.pause.title = state.paused ? 'Resume shuffle (Space)' : 'Pause shuffle (Space)';
 }

@@ -136,6 +136,21 @@ button:focus-visible, select:focus-visible, #cam-list button:focus-visible {
 }
 #fav-btn.on { color: var(--focus); }
 
+#toast {
+  position: fixed;
+  left: 50%;
+  bottom: max(110px, 16vh);
+  transform: translateX(-50%);
+  max-width: calc(100vw - 32px);
+  padding: 12px 18px;
+  border-radius: var(--radius);
+  background: var(--panel);
+  font-size: clamp(0.95rem, 1.8vw, 1.3rem);
+  text-align: center;
+  z-index: 6;
+}
+#toast[hidden] { display: none; }
+
 .overlay {
   position: fixed;
   inset: 0;
