@@ -1,7 +1,7 @@
 // CamCycle: shuffles through live public webcams (YouTube live + HLS streams).
 
 const HLS_JS_URL = 'https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js';
-const LOAD_TIMEOUT_MS = 10000;   // give up on a camera that hasn't started playing by then
+const LOAD_TIMEOUT_MS = 20000;   // give up on a camera that hasn't started playing by then
 const STALL_TIMEOUT_MS = 30000;  // skip a camera that buffers this long mid-play
 const DEAD_TTL_MS = 2 * 60 * 60 * 1000; // remember failed cameras for 2 hours
 const IDLE_MS = 4000;            // hide controls after this much inactivity
