@@ -11,6 +11,7 @@ A static web app (PWA) that shuffles through live public webcams on a timer. It'
 | `manifest.webmanifest`, `sw.js`, `icons/` | PWA install support and offline app shell |
 | `tools/check-cameras.mjs` | Checks which cameras are currently live |
 | `tools/discover-cameras.mjs`, `tools/sources.json` | Finds new cameras from trusted sources |
+| `tools/review.mjs` | Interactive approve/reject of pending candidates |
 
 ## Run locally
 
@@ -105,6 +106,23 @@ node tools/discover-cameras.mjs --add     # find and add in one step (for schedu
 ```
 
 **Reviewing:** in `tools/candidates.json`, fix any names, locations or categories you want to change. Add `"skip": true` to cameras you don't want. `--accept` adds the rest and records the skipped ones in `tools/rejected.json`, so they're never suggested again. The `title` field shows the original YouTube title for reference and is dropped on accept.
+
+**Reviewing one at a time:** instead of editing the JSON by hand, run the interactive reviewer. It shows each candidate, opens the stream in your browser so you can look, and waits for a key:
+
+```sh
+node tools/review.mjs
+```
+
+| Key | Action |
+|---|---|
+| `a` | Approve — add it to `cameras.json` |
+| `x` | Reject — record it in `tools/rejected.json` so it's never suggested again |
+| `s` | Skip — leave it in `candidates.json` for next time |
+| `o` | Open the stream again |
+| `b` | Go back to the previous camera to change your decision |
+| `q` | Save and quit |
+
+Decisions are saved as you go, so you can quit any time and resume later. Set `CAMCYCLE_NO_OPEN=1` to review without launching streams. After a session, commit and push `cameras.json` (and `tools/rejected.json`).
 
 **Tuning (`tools/sources.json`):**
 - **Add a source:** add a channel to `youtube` with its `channelId`, a default `category`, and a `location`/`country`. Leave `location` empty for channels that cover many places; locations in parentheses at the end of titles are picked up automatically.
