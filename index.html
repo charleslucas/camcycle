@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>CamCycle</title>
+  <meta name="description" content="Shuffle through live public webcams from around the world.">
+  <meta name="theme-color" content="#000000">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon-180.png">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main id="stage" aria-live="polite">
+    <div id="player-slot"></div>
+    <video id="hls-video" playsinline muted autoplay x-webkit-airplay="allow" hidden></video>
+    <!-- Sits above the YouTube iframe so taps/clicks reach us, not the embed. -->
+    <div id="tap-layer"></div>
+
+    <div id="loading" hidden>
+      <div class="spinner"></div>
+      <div id="loading-text">Loading…</div>
+    </div>
+
+    <div id="caption">
+      <div id="cam-name"></div>
+      <div id="cam-meta"></div>
+    </div>
+
+    <div id="progress"><div id="progress-bar"></div></div>
+  </main>
+
+  <div id="start" class="overlay">
+    <div class="start-card">
+      <h1>CamCycle</h1>
+      <p>Live public webcams from around the world, shuffled.</p>
+      <button id="start-btn" class="big" autofocus>▶ Start</button>
+      <p class="hint">Tip: on a TV browser, press Start and then ⛶ for fullscreen.</p>
+    </div>
+  </div>
+
+  <nav id="controls" aria-label="Player controls">
+    <button id="prev-btn" title="Previous (←)">⏮</button>
+    <button id="pause-btn" title="Pause shuffle (Space)">⏸</button>
+    <button id="next-btn" title="Next (→)">⏭</button>
+    <button id="mute-btn" title="Sound (M)">🔇</button>
+    <button id="fav-btn" title="Favorite (F)">☆</button>
+    <select id="cat-select" title="Category"></select>
+    <select id="time-select" title="Time per camera">
+      <option value="30">30 s</option>
+      <option value="60">1 min</option>
+      <option value="120">2 min</option>
+      <option value="300">5 min</option>
+      <option value="600">10 min</option>
+      <option value="1800">30 min</option>
+    </select>
+    <button id="list-btn" title="Camera list (L)">☰</button>
+    <button id="airplay-btn" title="AirPlay" hidden>📺</button>
+    <button id="fs-btn" title="Fullscreen">⛶</button>
+  </nav>
+
+  <aside id="list-panel" hidden>
+    <div class="panel-head">
+      <strong>Cameras</strong>
+      <button id="list-close" title="Close">✕</button>
+    </div>
+    <ul id="cam-list"></ul>
+  </aside>
+
+  <script src="app.js" type="module"></script>
+</body>
+</html>
