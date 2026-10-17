@@ -12,6 +12,7 @@ A static web app (PWA) that shuffles through live public webcams on a timer. It'
 | `tools/check-cameras.mjs` | Checks which cameras are currently live |
 | `tools/discover-cameras.mjs`, `tools/sources.json` | Finds new cameras from trusted sources |
 | `tools/review.mjs` | Interactive approve/reject of pending candidates |
+| `tools/add-camera.mjs` | Add one camera from a YouTube or HLS link |
 
 ## Run locally
 
@@ -85,6 +86,23 @@ Settings changed in the app (category, timer, sound, favorites) are remembered p
 Cameras that fail to load are skipped automatically and retried after 2 hours. To retry them sooner, open the camera list (☰) and choose **Retry skipped cameras**.
 
 The app re-downloads `cameras.json` every hour, so a TV left running picks up list changes without a reload, and the camera on screen keeps playing.
+
+## Adding a camera by hand
+
+To add a single camera from a link (a YouTube URL or a direct `.m3u8` HLS stream):
+
+```sh
+node tools/add-camera.mjs "https://www.youtube.com/watch?v=VIDEO_ID"
+```
+
+It checks the link works, then asks for the name, category, location, country and credit — prefilling the name and channel from YouTube where it can. Accept a prompt's suggestion with Enter. You can also pass any field as a flag to skip that question:
+
+```sh
+node tools/add-camera.mjs "https://.../stream.m3u8" \
+  --name "Harbor View" --category harbors --location "Town, Region" --country GB --credit "Harbor Trust"
+```
+
+Other flags: `--id` to set the id, `--yes` to take flags/defaults without prompting, `--no-verify` to add a camera that happens to be offline right now. Accepted links: YouTube `watch?v=`, `youtu.be/`, `/live/`, `/embed/` or a bare 11-character id; or an `https` `.m3u8` URL. Commit and push `cameras.json` afterwards to publish.
 
 ## Checking camera health
 
