@@ -13,7 +13,7 @@
 // Requires Node 18+.
 
 import { spawn } from 'node:child_process';
-import { emitKeypressEvents } from 'node:readline';
+import { emitKeypressEvents, createInterface } from 'node:readline';
 import { CAMERAS_FILE, readJson, writeJson } from './lib.mjs';
 
 const CANDIDATES_FILE = new URL('./candidates.json', import.meta.url);
@@ -32,29 +32,48 @@ function openInBrowser(url) {
   } catch { /* opening is best-effort; the URL is printed anyway */ }
 }
 
-// One persistent keypress reader. Keeps raw mode on for the whole session and queues keys,
-// so fast typing (or piped input) is never dropped between prompts.
+// Input handling. Two modes, chosen by what the terminal supports:
+//  - raw: a single keypress acts immediately (real Windows console, macOS/Linux TTY).
+//  - line: type a letter and press Enter. Used when raw mode isn't available — notably
+//    Git Bash / MinTTY on Windows, where setRawMode isn't supported and keystrokes are
+//    line-buffered, so single-key mode looks unresponsive. Also used for piped input.
+// Both share a queue + single-waiter design so keys are never dropped between prompts.
+const rawMode = !process.env.CAMCYCLE_LINE
+  && Boolean(process.stdin.isTTY) && typeof process.stdin.setRawMode === 'function';
+
 const keyQueue = [];
 let keyWaiter = null;
 let inputClosed = false;
+let restoreKeys = () => {};
 
-function setupKeys() {
-  emitKeypressEvents(process.stdin);
-  process.stdin.setRawMode?.(true);
-  process.stdin.resume();
-  process.stdin.on('keypress', (_, key) => {
-    if (key.ctrl && key.name === 'c') { restoreKeys(); process.exit(130); }
-    const name = key.name ?? key.sequence;
-    if (keyWaiter) { const w = keyWaiter; keyWaiter = null; w(name); }
-    else keyQueue.push(name);
-  });
-  // If input ends (piped input runs out, or the terminal closes), stop asking for keys.
-  process.stdin.on('end', () => { inputClosed = true; if (keyWaiter) { const w = keyWaiter; keyWaiter = null; w('q'); } });
+function deliver(k) {
+  if (keyWaiter) { const w = keyWaiter; keyWaiter = null; w(k); }
+  else keyQueue.push(k);
 }
 
-function restoreKeys() {
-  process.stdin.setRawMode?.(false);
-  process.stdin.pause();
+function setupKeys() {
+  if (rawMode) {
+    emitKeypressEvents(process.stdin);
+    process.stdin.setRawMode(true);
+    process.stdin.resume();
+    process.stdin.on('keypress', (_, key) => {
+      if (key.ctrl && key.name === 'c') { restoreKeys(); process.exit(130); }
+      deliver(key.name ?? key.sequence);
+    });
+    restoreKeys = () => { process.stdin.setRawMode(false); process.stdin.pause(); };
+  } else {
+    const rl = createInterface({ input: process.stdin, terminal: false });
+    rl.on('line', (line) => deliver((line.trim()[0] ?? '').toLowerCase()));
+    restoreKeys = () => rl.close();
+  }
+  // Input ran out (piped input exhausted, or the terminal closed): stop asking for keys.
+  process.stdin.on('end', closeInput);
+  process.stdin.on('close', closeInput);
+}
+
+function closeInput() {
+  inputClosed = true;
+  if (keyWaiter) { const w = keyWaiter; keyWaiter = null; w('q'); }
 }
 
 function readKey() {
@@ -92,7 +111,10 @@ async function persist() {
 setupKeys();
 const todo = remaining();
 console.log(`${todo.length} camera(s) to review (${candidates.length - todo.length} already decided).`);
-console.log('Keys:  a approve   x reject   s skip   o open again   b back   q save & quit\n');
+console.log('Keys:  a approve   x reject   s skip   o open again   b back   q save & quit');
+console.log(rawMode
+  ? 'Press a key for each camera (no Enter needed).\n'
+  : 'Type a letter and press Enter for each camera. (For single-key control, run this in PowerShell or cmd.)\n');
 
 const order = todo;
 let i = 0;
