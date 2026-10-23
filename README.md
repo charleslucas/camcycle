@@ -10,7 +10,7 @@ A static web app (PWA) that shuffles through live public webcams on a timer. It'
 | `cameras.json` | The camera list (edit this to add or remove cameras) |
 | `manifest.webmanifest`, `sw.js`, `icons/` | PWA install support and offline app shell |
 | `tools/check-cameras.mjs` | Checks which cameras are currently live |
-| `tools/discover-cameras.mjs`, `tools/sources.json` | Finds new cameras from trusted sources |
+| `tools/discover-cameras.mjs`, `tools/sources.json` | Finds new cameras from YouTube, Caltrans, and insecam.org |
 | `tools/review.mjs` | Interactive approve/reject of pending candidates |
 | `tools/add-camera.mjs` | Add one camera from a YouTube or HLS link |
 
@@ -147,6 +147,7 @@ Decisions are saved as you go, so you can quit any time and resume later. Set `C
 - **Filter a channel:** `include` and `exclude` are per-channel title patterns (for example, NASA only keeps ISS streams).
 - **Shared rules:** `defaults.maxPerChannel` (6) keeps big networks from flooding the shuffle. `defaults.exclude` drops non-camera streams such as music. `defaults.strip` removes boilerplate from names.
 - **Caltrans volume:** `caltrans.maxPerRun` caps how many traffic cameras are added per run.
+- **insecam.org:** enable by adding an `insecam` entry with `countries` (country code → page count), `maxPerCountry` (hard cap), `exclude` patterns, and optional `categoryMap` for tag-based categories. The tool scrapes country pages and validates each camera (YouTube embeddable or HLS with CORS). See `tools/max-pages.json` for per-country page limits.
 
 **Scheduling:** to update automatically every week on Windows (prune dead cameras, add new ones, publish):
 

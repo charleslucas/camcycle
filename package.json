@@ -1,0 +1,24 @@
+{
+  "name": "camcycle",
+  "version": "1.0.0",
+  "description": "A static web app (PWA) that shuffles through live public webcams on a timer. It's built to run fullscreen in a TV browser (Fire TV Silk) or on a phone. There's no build step and no server code.",
+  "main": "app.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/charleslucas/camcycle.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "bugs": {
+    "url": "https://github.com/charleslucas/camcycle/issues"
+  },
+  "homepage": "https://github.com/charleslucas/camcycle#readme",
+  "dependencies": {
+    "cheerio": "^1.0.0-rc.12"
+  }
+}

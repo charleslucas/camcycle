@@ -9,11 +9,14 @@
 
 import { rm } from 'node:fs/promises';
 import { CAMERAS_FILE, get, readJson, writeJson, mapLimit, checkEmbeddable, checkHls, channelLiveVideos } from './lib.mjs';
+import * as cheerio from 'cheerio';
 
 const SOURCES_FILE = new URL('./sources.json', import.meta.url);
 const CANDIDATES_FILE = new URL('./candidates.json', import.meta.url);
 const REJECTED_FILE = new URL('./rejected.json', import.meta.url);
 const CALTRANS_SOURCE = 'https://cwwp2.dot.ca.gov/documentation/cctv/cctv.htm';
+const INSECAM_BASE = 'http://www.insecam.org';
+const INSECAM_MAX_PAGES = new URL('./max-pages.json', import.meta.url);
 
 // A camera's identity is its video ID or stream URL, so renamed entries still count as known.
 const keyOf = (cam) => (cam.type === 'hls' ? cam.url : cam.videoId);
@@ -59,6 +62,200 @@ function shuffle(arr) {
     [arr[i], arr[j]] = [arr[j], arr[i]];
   }
   return arr;
+}
+
+// insecam: extract country code from bycountry page.
+function extractInsecamCountryCode(html) {
+  const m = html.match(/\/en\/bycountry\/(\w+)\//);
+  return m ? m[1] : null;
+}
+
+// insecam: extract manufacturer from camera page.
+function extractInsecamManufacturer(html) {
+  const m = html.match(/<a[^>]*>[\s\S]*?bytype\/(\w+)[^>]*<\/a>/i);
+  return m ? m[1].toUpperCase() : 'Unknown';
+}
+
+// insecam: extract tags from camera page.
+function extractInsecamTags(html) {
+  const tags = [];
+  const matches = html.match(/addtagset\("(\w+)"\);/g);
+  if (matches) tags.push(...matches.map(m => m.match(/addtagset\("(\w+)"\)/)[1]));
+  return tags;
+}
+
+// insecam: extract camera details from insecam camera page.
+async function extractInsecamCamera(cameraId, countryCode) {
+  const url = `${INSECAM_BASE}/en/view/${cameraId}/`;
+  const { res, text } = await get(url);
+  if (!res.ok) return null;
+
+  // Extract country name from page
+  const countryMatch = text.match(/<span class="[^"]*country[^"]*"[^>]*>[\s\S]*?<\/span>/i);
+  const country = countryMatch ? countryMatch[0].replace(/<[^>]*>/g, '').trim() : 'Unknown location';
+
+  // Extract manufacturer
+  const manufacturer = extractInsecamManufacturer(text);
+
+  // Extract tags
+  const tags = extractInsecamTags(text);
+
+  // Extract image URL (stream)
+  const imgMatch = text.match(/<img[^>]*id=["']image0["'][^>]*src=["']([^"']+)["']/);
+  if (!imgMatch || imgMatch[1].includes('/static/no.jpg')) return null;
+
+  const streamUrl = imgMatch[1];
+
+  // Determine if it's YouTube or HLS
+  let type = 'unknown', videoId = null, stream = null, name = `Camera ${cameraId}`;
+
+  if (/youtube\.com\/watch\?v=/.test(streamUrl)) {
+    type = 'youtube';
+    const match = streamUrl.match(/youtube\.com\/watch\?v=([^&]+)/);
+    videoId = match ? match[1] : null;
+  } else if (streamUrl.endsWith('.m3u8') || streamUrl.includes('/live/')) {
+    type = 'hls';
+    stream = streamUrl;
+  }
+
+  if (!videoId && !stream) return null;
+
+  return {
+    id: `insecam-${cameraId}`,
+    name,
+    type,
+    videoId,
+    stream,
+    country,
+    manufacturer,
+    tags,
+    countryCode,
+  };
+}
+
+// insecam: determine category from tags.
+function getInsecamCategory(tags, countryCode) {
+  const tagMap = {
+    'city': 'cities', 'street': 'cities',
+    'nature': 'nature', 'forest': 'nature', 'park': 'nature',
+    'animal': 'animals', 'bird': 'animals',
+    'traffic': 'traffic', 'highway': 'traffic', 'road': 'traffic',
+    'beach': 'beaches', 'sea': 'harbors', 'port': 'harbors',
+    'snow': 'mountains', 'ski': 'mountains',
+    'volcano': 'nature',
+  };
+
+  for (const [tag, category] of Object.entries(tagMap)) {
+    if (tags.includes(tag)) return category;
+  }
+
+  // Fallback: check for country-based categories
+  const countryMap = {
+    'JP': 'cities', 'CN': 'cities',
+    'US': 'cities', 'CA': 'cities', 'AU': 'cities',
+    'NO': 'mountains', 'CH': 'mountains', 'AT': 'mountains', 'DE': 'cities',
+    'FR': 'cities', 'IT': 'villages',
+    'ES': 'cities', 'PT': 'cities', 'GR': 'cities', 'HR': 'cities',
+    'FI': 'cities', 'SE': 'cities', 'DK': 'cities', 'NL': 'cities', 'BE': 'cities',
+  };
+
+  for (const [code, category] of Object.entries(countryMap)) {
+    if (countryCode && countryCode.toUpperCase() === code) return category;
+  }
+
+  return 'cities';
+}
+
+// insecam: get max page number for a country.
+async function getInsecamMaxPage(countryCode) {
+  const url = `${INSECAM_BASE}/en/bycountry/${countryCode}/`;
+  const { res, text } = await get(url);
+  if (!res.ok) return 1;
+
+  const m = text.match(/pagenavigator\("\?page=", (\d+), \d+\);/);
+  return m ? parseInt(m[1], 10) : 1;
+}
+
+// insecam: discover cameras from insecam.org.
+async function discoverInsecam(insecamConfig, known, ids) {
+  const maxPagesConfig = await readJson(INSECAM_MAX_PAGES, {});
+  const found = [];
+
+  for (const [countryCode, max] of Object.entries(maxPagesConfig)) {
+    const limit = Math.max(insecamConfig.maxPerCountry ?? 10, max ?? 3);
+
+    // Skip if we already have enough cameras from this country
+    const existingCount = found.filter(c => c.countryCode === countryCode).length;
+    if (existingCount >= limit) {
+      console.log(`  skipping ${countryCode} (already have ${existingCount} cameras)`);
+      continue;
+    }
+
+    console.log(`  scraping ${countryCode} (${max} pages)...`);
+
+    for (let page = 1; page <= max; page++) {
+      const url = `${INSECAM_BASE}/en/bycountry/${countryCode}/?page=${page}`;
+      const { res, text } = await get(url);
+      if (!res.ok) {
+        console.log(`    ! page ${page}: HTTP ${res.status}`);
+        continue;
+      }
+
+      const imgMatches = text.matchAll(/<img[^>]*id=["']image(\d+)["'][^>]*src=["']([^"']+)["']/g);
+      let imageId = 0;
+
+      for (const match of imgMatches) {
+        imageId = parseInt(match[1], 10);
+        const imgSrc = match[2];
+
+        // Skip non-camera images
+        if (imgSrc.includes('/static/') || imgSrc.includes('/yandex') || !imgSrc.includes('.')) continue;
+
+        const cameraId = `${countryCode}-${String(page).padStart(2, '0')}-${String(imageId).padStart(3, '0')}`;
+
+        if (known.has(cameraId)) continue;
+
+        const cam = await extractInsecamCamera(cameraId, countryCode);
+        if (!cam) continue;
+
+        if (known.has(cam.id)) continue;
+
+        // Check embeddability
+        const why = cam.type === 'youtube'
+          ? await checkEmbeddable(cam.videoId).catch(() => 'unknown')
+          : await checkHls(cam.stream).catch(() => 'unknown');
+
+        if (why) {
+          console.log(`    - ${cam.id}: "${cam.name}" skipped (${why})`);
+          continue;
+        }
+
+        // Determine category
+        const category = getInsecamCategory(cam.tags, cam.countryCode);
+
+        found.push({
+          id: cam.id,
+          name: cam.name,
+          type: cam.type,
+          videoId: cam.videoId,
+          stream: cam.stream,
+          category,
+          country: cam.country,
+          location: `${cam.country} ${cam.countryCode ? `(${cam.countryCode})` : ''}`,
+          credit: 'insecam.org',
+          source: INSECAM_BASE,
+          insecamId: cam.id.replace('insecam-', ''),
+          manufacturer: cam.manufacturer,
+          tags: cam.tags,
+          countryCode: cam.countryCode,
+        });
+
+        known.add(cam.id);
+      }
+    }
+  }
+
+  return found;
 }
 
 // perChannel: how many cameras each channel already has (in the list or awaiting review).
@@ -195,6 +392,10 @@ async function discover(addDirectly) {
   if (sources.caltrans) {
     console.log('Checking Caltrans…');
     found.push(...await discoverCaltrans(sources.caltrans, known, ids, [...cams, ...pending, ...found]));
+  }
+  if (sources.insecam) {
+    console.log('Checking insecam.org…');
+    found.push(...await discoverInsecam(sources.insecam, known, ids));
   }
 
   console.log(`\nFound ${found.length} new camera(s):`);
