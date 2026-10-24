@@ -9,6 +9,13 @@ const CAPTION_MS = 8000;         // keep the caption up this long after each swi
 const REFRESH_MS = 60 * 60 * 1000; // re-fetch cameras.json this often
 const FAIL_STREAK_LIMIT = 4;     // this many failures in a row looks like our network, not the cameras
 
+// Unregister any stale service workers IMMEDIATELY - they cause fetch() to fail on file://
+if ('serviceWorker' in navigator && location.protocol === 'file:') {
+  navigator.serviceWorker.getRegistrations().then((registrations) => {
+    registrations.forEach((reg) => reg.unregister());
+  });
+}
+
 const $ = (id) => document.getElementById(id);
 const els = {
   slot: $('player-slot'), video: $('hls-video'), tap: $('tap-layer'),
@@ -51,6 +58,7 @@ const state = {
   token: 0,          // bumps on every switch so stale callbacks can tell they're stale
   ytPlayer: null,
   hls: null,
+  mjpegImg: null,
   playingSince: 0,   // when the dwell timer started (0 = not playing yet)
   elapsed: 0,        // dwell time already used before a pause
   loadTimer: 0,
@@ -184,6 +192,9 @@ function teardown() {
   els.video.removeAttribute('src');
   els.video.load();
   els.video.hidden = true;
+  if (state.mjpegImg) { state.mjpegImg.onload = state.mjpegImg.onerror = null; state.mjpegImg.remove(); state.mjpegImg = null; }
+  clearInterval(state.mjpegCheck);
+  state.mjpegCheck = 0;
 }
 
 function play(cam) {
@@ -207,9 +218,16 @@ function play(cam) {
     if (token === state.token) fail(cam, 'timed out');
   }, LOAD_TIMEOUT_MS);
 
-  const start = cam.type === 'hls' ? playHls : playYouTube;
+  const start = cam.type === 'hls' ? playHls : cam.type === 'mjpeg' ? playMjpeg : playYouTube;
   start(cam, token).catch((err) => {
-    if (token === state.token) fail(cam, err?.message || 'error');
+    if (token === state.token) {
+      // If this is an insecam camera with compatibility issues, try the fallback player
+      if (cam.source === 'http://www.insecam.org' && cam.compatibility) {
+        playInsecamFallback(cam, token, err.message);
+        return;
+      }
+      fail(cam, err?.message || 'error');
+    }
   });
 }
 
@@ -392,6 +410,84 @@ if (window.WebKitPlaybackTargetAvailabilityEvent) {
     $('airplay-btn').hidden = e.availability !== 'available';
   });
   $('airplay-btn').onclick = () => els.video.webkitShowPlaybackTargetPicker();
+}
+
+// --- MJPEG (IP camera snapshot stream) ---
+
+async function playMjpeg(cam, token) {
+  const img = document.createElement('img');
+  img.style.width = '100%';
+  img.style.height = '100%';
+  img.style.objectFit = 'contain';
+  img.alt = cam.name;
+
+  // Set the src to the stream URL. Browsers render MJPEG streams (Content-Type: image/jpeg with
+  // repeated images) automatically as a video-like sequence when the URL points directly to
+  // an IP camera's snapshot endpoint.
+  img.src = cam.url || cam.stream;
+
+  const onDone = () => {
+    if (token !== state.token) return;
+    teardown();
+    // For MJPEG, a load failure usually means the stream is offline or blocking mixed content.
+    fail(cam, 'mjpeg failed');
+  };
+  img.onerror = onDone;
+  // For MJPEG streams, the first load is the "start playing" signal.
+  img.onload = () => {
+    if (token !== state.token) return;
+    clearTimeout(state.loadTimer);
+    clearStall();
+    els.loading.hidden = true;
+    state.failStreak = 0;
+    state.streakIds = [];
+    state.playingSince = Date.now();
+    // Monitor for connection loss by tracking the last successful load time.
+    // We poll by reassigning src; if it fails, the camera is down.
+    state.mjpegCheck = setInterval(() => {
+      if (token !== state.token || state.paused) return;
+      const testImg = new Image();
+      testImg.onerror = () => {
+        if (token === state.token && !state.paused) fail(cam, 'mjpeg disconnected');
+      };
+      // Use a cache-busting param to force a new request.
+      testImg.src = (cam.url || cam.stream) + '&_=' + Date.now();
+    }, 5000);
+  };
+
+  els.slot.appendChild(img);
+  state.mjpegImg = img;
+}
+
+// --- Insecam fallback player (iframe for incompatible streams) ---
+async function playInsecamFallback(cam, token, error) {
+  console.log(`Using fallback player for ${cam.id}: ${error}`);
+  
+  // Show a message to the user about the fallback
+  els.loadingText.textContent = 'Loading camera via insecam.org…';
+  
+  teardown();
+  
+  // Create iframe to embed the insecam camera page
+  const iframe = document.createElement('iframe');
+  const cameraId = cam.insecamId || cam.id.replace('insecam-', '');
+  iframe.src = `http://www.insecam.org/en/view/${cameraId}/`;
+  iframe.style.width = '100%';
+  iframe.style.height = '100%';
+  iframe.style.border = 'none';
+  iframe.allow = 'autoplay; encrypted-media; picture-in-picture';
+  iframe.allowFullscreen = true;
+  
+  els.slot.appendChild(iframe);
+  
+  // Mark as playing after a short delay
+  setTimeout(() => {
+    if (token === state.token) {
+      onPlaying(token);
+      // Show a toast with information
+      toast(`Displaying ${cam.name} via insecam.org (stream not directly playable)`);
+    }
+  }, 2000);
 }
 
 // ---------- dwell timer and progress ----------
@@ -595,11 +691,58 @@ els.time.onchange = () => {
 
 // ---------- startup ----------
 
+const isFileProtocol = location.protocol === 'file:';
+
+async function loadCamerasFile(url) {
+  // For file:// URLs, use fetch (works better than XHR with file://)
+  if (isFileProtocol) {
+    // Build absolute URL from relative path
+    const absUrl = new URL(url, location.href).href;
+    console.log(`[file://] Loading camera list:`);
+    console.log(`  Relative URL: ${url}`);
+    console.log(`  location.href: ${location.href}`);
+    console.log(`  Resolved absolute URL: ${absUrl}`);
+    console.log(`  Location pathname: ${location.pathname}`);
+    
+    // Try fetching with cache: no-store
+    try {
+      const res = await fetch(absUrl, { cache: 'no-store' });
+      if (!res.ok) throw new Error(`HTTP ${res.status} (${res.statusText})`);
+      return { ok: true, text: await res.text() };
+    } catch (err) {
+      console.error(`[file://] fetch failed completely. Error type: ${err.constructor.name}`, err);
+      throw new Error(`fetch failed: ${err.message}. Try running with --allow-file-access-from-files flag or use a local server (npm run dev)`);
+    }
+  }
+  // For http/https URLs, use fetch
+  const res = await fetch(url, { cache: 'no-cache' });
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  return { ok: true, text: await res.text() };
+}
+
+function showStartupError(msg) {
+  const el = $('start');
+  if (!el) return;
+  el.classList.add('error');
+  const card = el.querySelector('.start-card');
+  if (card) {
+    card.innerHTML = `<h1>⚠ Error</h1><p>${msg}</p><p>Please make sure <code>cameras.json</code> exists in the same directory as this page.</p>`;
+  }
+}
+
 async function loadCameras() {
-  const res = await fetch('cameras.json', { cache: 'no-cache' });
-  if (!res.ok) throw new Error('cameras.json HTTP ' + res.status);
-  const cams = (await res.json()).filter((c) => c.id && c.name && (c.type === 'hls' ? c.url : c.videoId || c.channelId));
-  if (!cams.length) throw new Error('cameras.json has no usable cameras');
+  let data;
+  try {
+    data = await loadCamerasFile('cameras.json');
+  } catch (err) {
+    showStartupError(`Failed to load cameras.json: ${err.message}`);
+    throw err;
+  }
+  const cams = JSON.parse(data.text).filter((c) => c.id && c.name && ((c.type === 'hls' || c.type === 'mjpeg') ? c.url : c.videoId || c.channelId));
+  if (!cams.length) {
+    showStartupError('cameras.json has no usable cameras');
+    throw new Error('No usable cameras');
+  }
   state.cams = cams;
   state.byId = new Map(cams.map((c) => [c.id, c]));
 }
@@ -629,9 +772,7 @@ async function init() {
   try {
     await loadCameras();
   } catch (err) {
-    els.startBtn.disabled = true;
-    els.startBtn.textContent = 'Could not load camera list';
-    console.error(err);
+    console.error('Startup failed:', err);
     return;
   }
   setInterval(refreshCameras, REFRESH_MS);
@@ -656,8 +797,17 @@ async function init() {
   loadYouTubeApi().catch(() => { /* retried when a YouTube camera comes up */ });
 }
 
+// Service workers don't work with file:// URLs and cause fetches to fail.
+// Only register for http/https, and unregister any existing SW when on file://.
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('sw.js').catch(() => { /* offline support is optional */ });
+  if (location.protocol === 'file:') {
+    // Unregister any stale service worker that might be intercepting file:// requests.
+    navigator.serviceWorker.getRegistrations().then((registrations) => {
+      registrations.forEach((reg) => reg.unregister());
+    });
+  } else {
+    navigator.serviceWorker.register('sw.js').catch(() => { /* offline support is optional */ });
+  }
 }
 
 init();

@@ -75,6 +75,14 @@
     <button id="retry-btn" hidden></button>
   </aside>
 
-  <script src="app.js" type="module"></script>
+  <!-- Unregister stale service workers before loading app.js (fixes file:// cache issues) -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.getRegistrations().then((regs) => {
+        regs.forEach((r) => r.unregister());
+      });
+    }
+  </script>
+  <script src="app.js?v=2"></script>
 </body>
 </html>

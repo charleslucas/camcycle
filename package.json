@@ -4,7 +4,8 @@
   "description": "A static web app (PWA) that shuffles through live public webcams on a timer. It's built to run fullscreen in a TV browser (Fire TV Silk) or on a phone. There's no build step and no server code.",
   "main": "app.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "dev": "npx serve ."
   },
   "repository": {
     "type": "git",

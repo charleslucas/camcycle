@@ -189,14 +189,19 @@ function uniqueId(base, taken) {
   return id;
 }
 
-// Get max page number for a country.
-async function getMaxPage(countryCode) {
-  const url = `${INSECAM_BASE}/en/bycountry/${countryCode}/`;
+// Get max page number for byrating listing.
+async function getByRatingMaxPage() {
+  const url = `${INSECAM_BASE}/en/byrating/?page=1`;
   const { res, text } = await get(url);
   if (!res.ok) return 1;
   
   const m = text.match(/pagenavigator\("\?page=", (\d+), \d+\);/);
   return m ? parseInt(m[1], 10) : 1;
+}
+
+// Sleep for specified milliseconds.
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 // Check if camera ID already exists.
@@ -208,28 +213,14 @@ async function discover(cameras, rejected, candidates, maxPages, verbose) {
   const ids = new Set([...cameras, ...candidates].map(c => c.id));
   // Don't re-suggest anything already listed, rejected, or waiting for review.
   const known = new Set([...cameras.map(keyOf), ...rejected, ...candidates.map(keyOf)]);
-  const perCountry = new Map();
-  
-  for (const c of cameras) {
-    if (c.country) {
-      const count = perCountry.get(c.country) || 0;
-      perCountry.set(c.country, count + 1);
-    }
-  }
-  
   const found = [];
   
-  for (const [countryCode, max] of Object.entries(maxPages)) {
-    const skip = perCountry.get(countryCode) && perCountry.get(countryCode) >= (max || 10);
-    if (skip && !verbose) {
-      console.log(`  skipping ${countryCode} (already have ${perCountry.get(countryCode)} cameras)`);
-      continue;
-    }
-    
-    console.log(`  scraping ${countryCode} (${max} pages)...`);
-    
-    for (let page = 1; page <= max; page++) {
-      const url = `${INSECAM_BASE}/en/bycountry/${countryCode}/?page=${page}`;
+  // Use byrating endpoint instead of country-specific pages
+  const maxPagesByRating = maxPages["*"] || 50; // Default to 50 pages, can be overridden by --max-pages=N
+  console.log(`  scraping byrating (${maxPagesByRating} pages)...`);
+  
+  for (let page = 1; page <= maxPagesByRating; page++) {
+    const url = `${INSECAM_BASE}/en/byrating/?page=${page}`;
       const { res, text } = await get(url);
       if (!res.ok) {
         console.log(`    ! page ${page}: HTTP ${res.status}`);
@@ -312,10 +303,10 @@ async function discoverInsecam(addDirectly, verbose, maxPages) {
   const cameras = await readJson(CAMERAS_FILE, []);
   const rejected = await readJson(REJECTED_FILE, []);
   const pending = await readJson(CANDIDATES_FILE, []);
-  const maxPagesJson = await readJson(new URL('./max-pages.json', import.meta.url), {});
-  // --max-pages=N caps every country at N pages, on top of its limit in max-pages.json.
+  // Use a simple default max pages for byrating, or --max-pages=N to override
+  const maxPagesJson = {};
   if (maxPages > 0) {
-    for (const code of Object.keys(maxPagesJson)) maxPagesJson[code] = Math.min(maxPagesJson[code], maxPages);
+    maxPagesJson["*"] = maxPages;
   }
 
   const known = new Set([...cameras.map(keyOf), ...rejected, ...pending.map(keyOf)]);
