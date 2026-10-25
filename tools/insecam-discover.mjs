@@ -15,7 +15,7 @@ const CANDIDATES_FILE = new URL('./candidates.json', import.meta.url);
 const REJECTED_FILE = new URL('./rejected.json', import.meta.url);
 
 // A camera's identity is its video ID or stream URL, matching the keys stored in rejected.json.
-const keyOf = (cam) => (cam.type === 'hls' ? cam.url : cam.videoId);
+const keyOf = (cam) => (cam.type === 'rtsp' || cam.type === 'hls' || cam.type === 'mjpeg' ? cam.url : cam.videoId);
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0 Safari/537.36';
 
@@ -114,7 +114,7 @@ async function extractCamera(cameraId) {
   
   const streamUrl = imgMatches[1];
   
-  // Determine if it's YouTube or HLS
+  // Determine if it's YouTube, HLS, or IP-based MJPEG snapshot stream
   let type = 'unknown', videoId = null, stream = null, name = `Camera ${cameraId}`;
   
   if (/youtube\.com\/watch\?v=/.test(streamUrl)) {
@@ -124,8 +124,13 @@ async function extractCamera(cameraId) {
   } else if (streamUrl.endsWith('.m3u8') || streamUrl.includes('/live/')) {
     type = 'hls';
     stream = streamUrl;
+  } else if (/^(http|https):\/\//.test(streamUrl)) {
+    // IP-based MJPEG stream (most common for insecam cameras that aren't YouTube/HLS)
+    type = 'mjpeg';
+    stream = streamUrl;
   }
   
+  // We accept mjpeg cameras - they may not be embeddable but are still valid cameras
   if (!videoId && !stream) return null;
   
   return {
@@ -238,10 +243,15 @@ async function discover(cameras, rejected, candidates, maxPages, verbose) {
         
         if (ids.has(cam.id) || known.has(keyOf(cam))) continue;
 
-        // Check embeddability
-        const why = cam.type === 'youtube' 
-          ? await checkEmbeddable(cam.videoId).catch(() => 'unknown')
-          : await checkHls(cam.url).catch(() => 'unknown');
+        // Check embeddability (but don't filter out mjpeg cameras)
+        let why = null;
+        if (cam.type === 'youtube') {
+          why = await checkEmbeddable(cam.videoId).catch(() => 'unknown');
+        } else if (cam.type === 'hls') {
+          why = await checkHls(cam.url).catch(() => 'unknown');
+        } else if (cam.type === 'mjpeg') {
+          why = cam.url.startsWith('http://') ? 'not https' : null;
+        }
         
         if (why && !verbose) {
           console.log(`    - ${cam.id}: "${cam.name}" skipped (${why})`);
@@ -255,8 +265,8 @@ async function discover(cameras, rejected, candidates, maxPages, verbose) {
           id: cam.id,
           name: cam.name,
           type: cam.type,
-          // Same shape as cameras.json: YouTube cameras carry videoId, HLS cameras carry url.
-          ...(cam.type === 'hls' ? { url: cam.url } : { videoId: cam.videoId }),
+          // Same shape as cameras.json: RTSP/HLS/MJPEG cameras carry url, YouTube cameras carry videoId.
+          ...(cam.type === 'rtsp' || cam.type === 'hls' || cam.type === 'mjpeg' ? { url: cam.url } : { videoId: cam.videoId }),
           category,
           // cameras.json uses two-letter codes for country; the full name goes in location.
           country: cam.countryCode?.toUpperCase() ?? '',
@@ -273,9 +283,8 @@ async function discover(cameras, rejected, candidates, maxPages, verbose) {
 
         if (verbose) console.log(`    + [${category}] ${cam.name} (${cam.type})`);
       }
-    }
   }
-  
+
   return found;
 }
 

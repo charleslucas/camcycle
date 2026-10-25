@@ -2,6 +2,10 @@
 
 A static web app (PWA) that shuffles through live public webcams on a timer. It's built to run fullscreen in a TV browser (Fire TV Silk) or on a phone. There's no build step and no server code.
 
+## Starting a local server
+PS C:\<path>\camcycle> npx serve . -l 3000 
+http://localhost:3000
+
 ## Files
 
 | File | Purpose |

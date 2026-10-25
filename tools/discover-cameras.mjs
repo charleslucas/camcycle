@@ -19,7 +19,7 @@ const INSECAM_BASE = 'http://www.insecam.org';
 const INSECAM_MAX_PAGES = new URL('./max-pages.json', import.meta.url);
 
 // A camera's identity is its video ID or stream URL, so renamed entries still count as known.
-const keyOf = (cam) => (cam.type === 'hls' ? cam.url : cam.videoId);
+const keyOf = (cam) => (cam.type === 'rtsp' || cam.type === 'hls' || cam.type === 'mjpeg' ? cam.url : cam.videoId);
 
 const slug = (s) => s.normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase()
   .replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 48);
@@ -141,10 +141,17 @@ async function extractInsecamCamera(cameraId) {
   } else if (streamUrl.endsWith('.m3u8') || streamUrl.includes('/live/')) {
     type = 'hls';
     stream = streamUrl;
+  } else if (/\/webcapture\.jpg\?command=snap/.test(streamUrl)) {
+    // Xiongmai (XMEye) cameras only serve single snapshots over HTTP, so they'd show a frozen frame.
+    return null;
   } else if (/^(http|https):\/\//.test(streamUrl)) {
     // IP-based MJPEG snapshot or direct stream URL (most common for insecam)
     type = 'mjpeg';
     stream = streamUrl;
+    // Vivotek snapshot URLs are single stills; the same host serves a browser-playable MJPEG stream.
+    // Pattern: http://<host>/cgi-bin/viewer/video.jpg -> http://<host>/video.mjpg
+    const vivotekMatch = streamUrl.match(/^(https?:\/\/[^\/]+)\/cgi-bin\/viewer\/video\.jpg$/);
+    if (vivotekMatch) stream = `${vivotekMatch[1]}/video.mjpg`;
   }
 
   // We accept mjpeg cameras - they may not be embeddable but are still valid cameras

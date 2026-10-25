@@ -218,7 +218,7 @@ function play(cam) {
     if (token === state.token) fail(cam, 'timed out');
   }, LOAD_TIMEOUT_MS);
 
-  const start = cam.type === 'hls' ? playHls : cam.type === 'mjpeg' ? playMjpeg : playYouTube;
+  const start = cam.type === 'rtsp' ? playRtsp : cam.type === 'hls' ? playHls : cam.type === 'mjpeg' ? playMjpeg : playYouTube;
   start(cam, token).catch((err) => {
     if (token === state.token) {
       // If this is an insecam camera with compatibility issues, try the fallback player
@@ -488,6 +488,58 @@ async function playInsecamFallback(cam, token, error) {
       toast(`Displaying ${cam.name} via insecam.org (stream not directly playable)`);
     }
   }, 2000);
+}
+
+// --- RTSP (IP camera RTSP stream) ---
+// RTSP can't be played directly in browsers, so we use the camera's web interface.
+// Many IP cameras have an embedded viewer on their main page that can play RTSP streams.
+async function playRtsp(cam, token) {
+  console.log(`Playing RTSP camera ${cam.id} via web interface: ${cam.url}`);
+  
+  // Try to derive the camera's base URL from the RTSP URL
+  // rtsp://212.87.254.166/live.sdp -> http://212.87.254.166/
+  let baseUrl = null;
+  if (cam.url && cam.url.startsWith('rtsp://')) {
+    baseUrl = 'http://' + cam.url.replace('rtsp://', '').split('/')[0];
+  }
+  
+  // Also check if we have the original http stream URL
+  if (!baseUrl && cam.stream) {
+    // Try to get base URL from the original mjpeg stream URL
+    const mjpegMatch = cam.stream.match(/^(https?:\/\/[^\/]+)/);
+    if (mjpegMatch) {
+      baseUrl = mjpegMatch[1];
+    }
+  }
+  
+  teardown();
+  
+  if (!baseUrl) {
+    fail(cam, 'rtsp: could not determine camera base URL');
+    return;
+  }
+  
+  // Show the camera's base URL and try the web interface
+  els.loadingText.textContent = `Loading ${cam.name} web interface…`;
+  
+  // Create an iframe to the camera's web interface
+  const iframe = document.createElement('iframe');
+  iframe.src = baseUrl;
+  iframe.style.width = '100%';
+  iframe.style.height = '100%';
+  iframe.style.border = 'none';
+  iframe.allow = 'autoplay; encrypted-media; picture-in-picture';
+  iframe.allowFullscreen = true;
+  
+  els.slot.appendChild(iframe);
+  
+  // Mark as playing after a short delay
+  setTimeout(() => {
+    if (token === state.token) {
+      onPlaying(token);
+      toast(`${cam.name}: RTSP stream (viewing via web interface at ${baseUrl})`);
+    }
+  }, 3000);
 }
 
 // ---------- dwell timer and progress ----------

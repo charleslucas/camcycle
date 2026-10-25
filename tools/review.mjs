@@ -19,8 +19,8 @@ import { CAMERAS_FILE, readJson, writeJson } from './lib.mjs';
 const CANDIDATES_FILE = new URL('./candidates.json', import.meta.url);
 const REJECTED_FILE = new URL('./rejected.json', import.meta.url);
 
-const keyOf = (cam) => (cam.type === 'hls' ? cam.url : cam.videoId);
-const streamUrl = (cam) => (cam.type === 'hls' ? cam.url : `https://www.youtube.com/watch?v=${cam.videoId}`);
+const keyOf = (cam) => (cam.type === 'rtsp' || cam.type === 'hls' || cam.type === 'mjpeg' ? cam.url : cam.videoId);
+const streamUrl = (cam) => (cam.type === 'rtsp' || cam.type === 'hls' || cam.type === 'mjpeg' ? cam.url : `https://www.youtube.com/watch?v=${cam.videoId}`);
 
 function openInBrowser(url) {
   if (process.env.CAMCYCLE_NO_OPEN) return; // set this to review without launching the stream

@@ -25,7 +25,7 @@ async function checkYouTube(cam) {
 const cams = await readJson(CAMERAS_FILE);
 const results = await mapLimit(cams, 8, async (cam) => {
   try {
-    return [cam, await (cam.type === 'hls' ? checkHls(cam.url) : checkYouTube(cam))];
+    return [cam, await (cam.type === 'hls' || cam.type === 'rtsp' ? checkHls(cam.url) : checkYouTube(cam))];
   } catch (err) {
     return [cam, err.name === 'TimeoutError' ? 'timeout' : err.message];
   }
