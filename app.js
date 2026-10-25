@@ -790,7 +790,10 @@ async function loadCameras() {
     showStartupError(`Failed to load cameras.json: ${err.message}`);
     throw err;
   }
-  const cams = JSON.parse(data.text).filter((c) => c.id && c.name && ((c.type === 'hls' || c.type === 'mjpeg') ? c.url : c.videoId || c.channelId));
+  // An https page can't load http streams (mixed content), so skip them rather than wait for each to fail.
+  const blocksHttp = location.protocol === 'https:';
+  const cams = JSON.parse(data.text).filter((c) => c.id && c.name && ((c.type === 'hls' || c.type === 'mjpeg') ? c.url : c.videoId || c.channelId)
+    && !(blocksHttp && c.url?.startsWith('http:')));
   if (!cams.length) {
     showStartupError('cameras.json has no usable cameras');
     throw new Error('No usable cameras');
