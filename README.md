@@ -17,6 +17,7 @@ http://localhost:3000
 | `tools/discover-cameras.mjs`, `tools/sources.json` | Finds new cameras from YouTube, Caltrans, and insecam.org |
 | `tools/review.mjs` | Interactive approve/reject of pending candidates |
 | `tools/add-camera.mjs` | Add one camera from a YouTube or HLS link |
+| `docs/camera-streams.md` | Which IP camera URL formats have a live MJPEG stream and which are stills only |
 
 ## Run locally
 

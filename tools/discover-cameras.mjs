@@ -150,8 +150,23 @@ async function extractInsecamCamera(cameraId) {
     stream = streamUrl;
     // Vivotek snapshot URLs are single stills; the same host serves a browser-playable MJPEG stream.
     // Pattern: http://<host>/cgi-bin/viewer/video.jpg -> http://<host>/video.mjpg
-    const vivotekMatch = streamUrl.match(/^(https?:\/\/[^\/]+)\/cgi-bin\/viewer\/video\.jpg$/);
+    const vivotekMatch = streamUrl.match(/^(https?:\/\/[^\/]+)\/cgi-bin\/viewer\/video\.jpg(\?|$)/);
     if (vivotekMatch) stream = `${vivotekMatch[1]}/video.mjpg`;
+    // Panasonic cameras likewise: http://<host>/SnapshotJPEG?... -> http://<host>/nphMotionJpeg?...
+    const panasonicMatch = streamUrl.match(/^(https?:\/\/[^\/]+)\/SnapshotJPEG\?/);
+    if (panasonicMatch) stream = `${panasonicMatch[1]}/nphMotionJpeg?Resolution=640x480&Quality=Standard`;
+    // Other Panasonic models: http://<host>/cgi-bin/camera?resolution=N... -> http://<host>/cgi-bin/mjpeg?resolution=N
+    const cgiCameraMatch = streamUrl.match(/^(https?:\/\/[^\/]+)\/cgi-bin\/camera\?(?:.*&)?resolution=(\d+)/);
+    if (cgiCameraMatch) stream = `${cgiCameraMatch[1]}/cgi-bin/mjpeg?resolution=${cgiCameraMatch[2]}`;
+    // Axis cameras: http://<host>/jpg/image.jpg... -> http://<host>/mjpg/video.mjpg
+    const axisMatch = streamUrl.match(/^(https?:\/\/[^\/]+)\/jpg\/image\.jpg(\?|$)/);
+    if (axisMatch) stream = `${axisMatch[1]}/mjpg/video.mjpg`;
+    // nph-jpeg.cgi cameras: http://<host>/nph-jpeg.cgi?N -> http://<host>/nph-mjpeg.cgi?N
+    const nphJpegMatch = streamUrl.match(/^(https?:\/\/[^\/]+)\/nph-jpeg\.cgi\?(\d+)/);
+    if (nphJpegMatch) stream = `${nphJpegMatch[1]}/nph-mjpeg.cgi?${nphJpegMatch[2]}`;
+    // Yawcam serves snapshots on its web port and the stream on its stream port (8081 by default).
+    const yawcamMatch = streamUrl.match(/^(https?:\/\/[^\/:]+)(:\d+)?\/out\.jpg\?/);
+    if (yawcamMatch) stream = `${yawcamMatch[1]}:8081/video.mjpg`;
   }
 
   // We accept mjpeg cameras - they may not be embeddable but are still valid cameras
